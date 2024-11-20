@@ -1,0 +1,27 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Train",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/train.py",
+            "console": "integratedTerminal",
+            // "args": ["-s", "/home/jaehong/dataset/db/playroom", "--eval", "--model_path", "output/test", "--save_iterations", "100", "1100", "2200"],
+            "args": ["-s", "/home/jaehong/dataset/db/playroom", "--eval", "--model_path", "output/playroom", "--save_iterations", "100"],
+            // "env": {
+            //     "CUBLAS_WORKSPACE_CONFIG": ":16:8"
+            // }
+        },
+        {
+            "name": "Python Debugger: Render",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/render.py",
+            "console": "integratedTerminal",
+            // "args": ["--iteration", "100", "-m", "output/playroom_sh3"],
+            "args": ["-m", "output/db/drjohnson", "--convert_SHs_python"]
+            // "args": ["-m", "output/db/drjohnson"]
+        }
+    ]
+}
