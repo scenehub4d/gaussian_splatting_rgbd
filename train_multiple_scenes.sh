@@ -55,13 +55,11 @@ run_training() {
       --frame_idx ${FRAME_IDX}
   done
 
-  # 필요 시 render.py 호출 (주석 해제)
   # python render.py \
   #   --iteration ${SAVE_ITERS[1]} \
   #   --model_path "${MODEL_PATH}"
 }
 
-# —————— 씬별 데이터셋 매핑 ——————
 declare -A SCENE_DATASETS=(
   ["mill19"]="mill19_scene0 mill19_scene1 mill19_scene2"
   ["arena"]="arena_scene0 arena_scene1 arena_scene2 arena_scene3 arena_scene4 arena_scene5 arena_scene6"
@@ -70,7 +68,6 @@ declare -A SCENE_DATASETS=(
   ["whiteboard"]="whiteboard_scene0 whiteboard_scene1 whiteboard_scene2 whiteboard_scene3"
 )
 
-# —————— 순차 실행 루프 ——————
 for SCENE in "${!SCENE_DATASETS[@]}"; do
   for DATA_NAME in ${SCENE_DATASETS[$SCENE]}; do
     run_training "${SCENE}" "${DATA_NAME}"
