@@ -1,8 +1,16 @@
 *.pyc
 #.vscode
-output
+output*
 build
 diff_rasterization/diff_rast.egg-info
 diff_rasterization/dist
 tensorboard_3d
 screenshots
+
+*.png
+multiscale*
+irn_test
+model*
+super_resolution
+SIBR_viewers
+tmp

@@ -23,6 +23,11 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from rgbd_processor import RGBD_Processor
+from geometry_processor import Ptcl_Processor
+import open3d as o3d
 class CameraInfo(NamedTuple):
     uid: int
     R: np.array
@@ -117,13 +122,16 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
     sys.stdout.write('\n')
     return cam_infos
 
-def fetchPly(path):
+def fetchPly(path, o3d=False):
     plydata = PlyData.read(path)
     vertices = plydata['vertex']
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
     colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
+    if o3d:
+        return BasicPointCloud(points=positions, colors=colors, normals=None)
     normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
+
 
 def storePly(path, xyz, rgb):
     # Define the dtype for the structured array
@@ -225,6 +233,168 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
                            is_nerf_synthetic=False)
     return scene_info
 
+def getRGBDCameraInfos(args, images_folder):
+    
+    if "arena" in images_folder:
+        scene_type = "arena"
+    elif "couch" in images_folder:
+        scene_type = "couch"
+    elif "kitchen" in images_folder:
+        scene_type = "kitchen"
+    elif "whiteboard" in images_folder:
+        scene_type = "whiteboard"
+    elif "mill19" in images_folder:
+        scene_type = "mill19"
+    else:
+        scene_type = "unknown"
+    # assert(args.scene_name == scene_type), f"Scene name {args.scene_name} does not match the images folder {images_folder}!"
+    # intrinsic_path = f"/shiraz/final_IMC_3D/intrinsics/{scene_type}_config.json"
+    # extrinsic_path = f"/shiraz/final_IMC_3D/extrinsics/global_extrinsics_{scene_type}_scaniverse_aligned.npy"
+    
+    cam_idx_list = [0, 1, 2, 3]  # Assuming we have 4 cameras indexed from 0 to 3
+    
+    rgbd_processor = RGBD_Processor(cam_idx_list=cam_idx_list, 
+                                extrinsic_path=args.extrinsic_path, 
+                                intrinsic_path=args.intrinsic_path)
+    frame_idx = args.frame_idx
+    
+    rgbd_processor.load_images(images_folder, frame_count=100, test_idx=frame_idx)
+    
+    cam_infos = []
+    depth_path_placeholder = "" # dummy
+    depth_params = None
+
+    for i in cam_idx_list:
+        # Intrinsic
+        K = rgbd_processor.intrinsics[i]
+        fx = K[0, 0]
+        fy = K[1, 1]
+        # cx = K[0, 2]
+        # cy = K[1, 2]
+
+        width  = 1920
+        height = 1080
+
+        FovX = focal2fov(fx, width) 
+        FovY = focal2fov(fy, height)
+
+        w2c = rgbd_processor.extrinsics[i].copy() #we saved the world to camera extrinsics
+        
+        R = np.transpose(w2c[:3,:3])  # R is stored transposed due to 'glm' in CUDA code
+        T = w2c[:3, 3]
+        
+        # We'll define an "image_name" for convenience
+        image_name = f"{frame_idx}.png"
+        is_test = True 
+
+        image_path = os.path.join(images_folder, f"cam{i}/rgb", image_name)
+        
+        cam_info = CameraInfo(
+            uid=i,
+            R=R,
+            T=T,
+            FovY=FovY,
+            FovX=FovX,
+            depth_params=depth_params,
+            image_path=image_path,
+            image_name=image_name,
+            depth_path=depth_path_placeholder,
+            width=width,
+            height=height,
+            is_test=is_test
+        )
+
+        cam_infos.append(cam_info)
+    return cam_infos, rgbd_processor    
+    
+
+def readRGBDSceneInfo(args, path, images, depths, eval, train_test_exp):
+    
+    # print("path" , path)
+    # print("images", images)
+    # print("depths", depths)
+    # print("eval", eval)
+    # print("train_test_exp", train_test_exp)
+    
+    cam_infos_unsorted, rgbd_processor = getRGBDCameraInfos(args, path)
+    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+    train_test_exp = True
+    train_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]
+    test_cam_infos = [c for c in cam_infos if c.is_test]
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    os.makedirs(f"tmp/{args.scene_name}", exist_ok=True)
+    ply_path = os.path.join("tmp", f"points3D_{args.frame_idx}.ply")
+    # ply_path = None
+
+    def extract_pointcloud_data_from_o3d(pcd: o3d.geometry.PointCloud):
+        """
+        From an Open3D PointCloud, return
+        - xyzs:   (N,3) float64
+        - rgbs:   (N,3) uint8 [0–255]
+        - errors: (N,1) float64 (or zeros if no attribute)
+        """
+        # 1) xyz coordinates
+        xyzs = np.asarray(pcd.points)            # shape (N,3), dtype float64
+
+        # 2) rgb colors
+        if pcd.has_colors():
+            # Open3D stores colors in [0.0,1.0]
+            rgbs_f = np.asarray(pcd.colors)      # shape (N,3), dtype float64
+            rgbs = (rgbs_f * 255).astype(np.uint8)
+        else:
+            rgbs = None
+
+        # 3) any custom “error” attribute?
+        #    In modern Open3D you can add pcd.point["error"] via a feature map.
+        error_attr = None
+        try:
+            # this will work if you did something like
+            #     pcd.point['error'] = o3d.utility.DoubleVector(my_error_list)
+            error_attr = np.asarray(pcd.point['error']).reshape(-1,1)
+        except Exception:
+            # fallback: zero‐out
+            error_attr = np.zeros((len(xyzs),1), dtype=np.float64)
+
+        return xyzs, rgbs, error_attr
+    
+    reconstructor = Ptcl_Processor()
+    fused_cloud = None
+    # just a single frame for now
+    # print(f"frame idx: {args.frame_idx}, Processing {len(rgbd_processor.color_imgs)} color images and {len(rgbd_processor.depth_imgs)} depth images")
+    assert(len(rgbd_processor.color_imgs) == 1 and len(rgbd_processor.depth_imgs) == 1), "This code is currently designed to process a single frame only."
+    for frame_idx, (color_imgs, depth_imgs) in enumerate(zip(rgbd_processor.color_imgs, rgbd_processor.depth_imgs)):
+        fused_cloud = o3d.geometry.PointCloud()            
+        for cam_idx in rgbd_processor.cam_idx_list:
+            loaded_idx = rgbd_processor.cam_idx_list.index(cam_idx)
+            pc = reconstructor.rgbd_to_ptcl(
+                                        rgb_img=color_imgs[loaded_idx],       
+                                        depth_img=depth_imgs[loaded_idx],
+                                        intrinsic=rgbd_processor.intrinsics[loaded_idx],
+                                        extrinsics=rgbd_processor.extrinsics[loaded_idx])
+            fused_cloud += pc.to_legacy()
+            # print(f"Fused {len(fused_cloud.points)} points from camera {cam_idx} at frame {frame_idx}")
+        if args.ptcl_downsample > 0:
+            print(f"Downsampling point cloud to {args.ptcl_downsample} m")
+            fused_cloud = fused_cloud.voxel_down_sample(voxel_size=0.05)  
+        o3d.io.write_point_cloud(ply_path, fused_cloud, write_ascii=True, compressed=True, print_progress=True)
+
+    try:
+        pcd = fetchPly(ply_path, o3d=True)
+        # pcd = extract_pointcloud_data_from_o3d(fused_cloud)
+    except:
+        pcd = None
+
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=train_cam_infos,
+                           test_cameras=test_cam_infos,
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path,
+                           is_nerf_synthetic=False)
+    return scene_info
+
+
 def readCamerasFromTransforms(path, transformsfile, depths_folder, white_background, is_test, extension=".png"):
     cam_infos = []
 
@@ -311,5 +481,6 @@ def readNerfSyntheticInfo(path, white_background, depths, eval, extension=".png"
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender" : readNerfSyntheticInfo,
+    "RGBD": readRGBDSceneInfo
 }

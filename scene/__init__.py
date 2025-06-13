@@ -30,6 +30,8 @@ class Scene:
         self.loaded_iter = None
         self.gaussians = gaussians
 
+        self.file_name = f"poin_cloud_{args.frame_idx}.ply" if hasattr(args, "frame_idx") else "point_cloud.ply"
+
         if load_iteration:
             if load_iteration == -1:
                 self.loaded_iter = searchForMaxIteration(os.path.join(self.model_path, "point_cloud"))
@@ -46,7 +48,9 @@ class Scene:
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.depths, args.eval)
         else:
-            assert False, "Could not recognize scene type!"
+            print("Assuming RGBD dataset!")
+            scene_info = sceneLoadTypeCallbacks["RGBD"](args, args.source_path, args.images, args.depths, args.eval, args.train_test_exp)
+            #assert False, "Could not recognize scene type!"
 
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
@@ -84,7 +88,8 @@ class Scene:
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
-        self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
+ 
+        self.gaussians.save_ply(os.path.join(point_cloud_path, self.file_name))
         exposure_dict = {
             image_name: self.gaussians.get_exposure_from_name(image_name).detach().cpu().numpy().tolist()
             for image_name in self.gaussians.exposure_mapping

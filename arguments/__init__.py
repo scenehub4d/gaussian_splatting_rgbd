@@ -56,6 +56,13 @@ class ModelParams(ParamGroup):
         self.train_test_exp = False
         self.data_device = "cuda"
         self.eval = False
+        
+        # our custom parameters
+        self.scene_name = ""
+        self.intrinsic_path =""
+        self.extrinsic_path = ""
+        self.ptcl_downsample = -1.0
+        self.frame_idx = 1          
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
