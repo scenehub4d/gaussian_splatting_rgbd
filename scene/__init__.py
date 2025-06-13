@@ -30,7 +30,7 @@ class Scene:
         self.loaded_iter = None
         self.gaussians = gaussians
 
-        self.file_name = f"poin_cloud_{args.frame_idx}.ply" if hasattr(args, "frame_idx") else "point_cloud.ply"
+        self.file_name = f"point_cloud_{args.frame_idx}.ply" if hasattr(args, "frame_idx") else "point_cloud.ply"
 
         if load_iteration:
             if load_iteration == -1:
